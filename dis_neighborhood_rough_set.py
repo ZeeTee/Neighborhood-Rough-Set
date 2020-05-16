@@ -14,7 +14,7 @@ class DP_NRS:
 
         # 数据维度
         self._ln, self._c = labeled_data.shape
-        self._un, self._c = unlabeled_data.shape
+        # self._un, self._c = unlabeled_data.shape
         # assert self._lc == self._un
 
         self.labels = np.asarray(labels).reshape(-1, 1)
@@ -27,8 +27,13 @@ class DP_NRS:
         self.len_l_dpc = len(self.l_dpc)
 
     def __un_label_dp(self, u_data):
+        """
+        为无标签样本计算邻域差别对
+        :param u_data:
+        :return:
+        """
         _udp = set()
-        if len(u_data) == 0 :
+        if len(u_data) == 0:
             return _udp
         for i in u_data:
             bool_dis = np.any(u_data - i > self.delta, axis=1)
@@ -38,6 +43,12 @@ class DP_NRS:
         return _udp
 
     def __label_dp(self, l_data, labels):
+        """
+        为有标签数据计算邻域差别对
+        :param l_data:
+        :param labels:
+        :return:
+        """
         _ldp = set()
         if len(l_data) == 0:
             return _ldp
@@ -62,28 +73,39 @@ class DP_NRS:
             data = self.labeled_data.values if C else self.labeled_data[attrs].values
             dp = self.__label_dp(data, self.labels)
         else:
-            data = self.unlabeled_data.values if C else self.unlabeled_data[attrs].values
-            dp = self.__un_label_dp(data)
+            if not self.unlabeled_data:
+                dp = set()
+            else:
+                data = self.unlabeled_data.values if C else self.unlabeled_data[attrs].values
+                dp = self.__un_label_dp(data)
         return dp
 
     def calculate_IA(self, A):
         if not len(A):
             return 0
         dp_l = self.calculate_dp(A, datatype='labeled')
-        dp_u = self.calculate_dp(A, datatype='unlabeled')
+        # dp_u = self.calculate_dp(A, datatype='unlabeled')
         l = len(dp_l.symmetric_difference(self.l_dpc))/(self.len_l_dpc + len(dp_l))
-        u = len(dp_u.symmetric_difference(self.u_dpc))/(self.len_u_dpc + len(dp_u))
-        return 0.8 * (1-l) + 0.2 * (1-u)
+        # u = len(dp_u.symmetric_difference(self.u_dpc))/(self.len_u_dpc + len(dp_u))
+        return 1-l
 
-    def run_reduction(self, no_iter):
+    def run_reduction(self, no_iter, algorithm):
+        if algorithm == "forward":
+            print("运行正向约简算法")
+            self.run_forward(no_iter)
+        else:
+            print("运行后向约简算法")
+            self.run_backward()
+
+    def run_forward(self, no_iter):
         print("初始化......")
-        p = set()
+        p = set()  # 约简集
         c = set(range(self._c))
         i_best = self.calculate_IA(list(c))
         i_cur = 0
 
         no = 0
-        while i_cur < i_best and no < no_iter:
+        while i_cur < i_best - 0.1 and no < no_iter:
             t = p.copy()
             iter_s = c.difference(p)
             i_t = self.calculate_IA(list(t))
@@ -105,29 +127,36 @@ class DP_NRS:
             no += 1
         return p
 
-    def run_backward(self):
+    def run_backward(self, threshold):
         print("初始化......")
-        p = set()
-        i_best = 1
-        i_cur = 0
+        p = set()  # 约简结果集合
+        i_cur = 1
         c = set(range(self._c))
         no = 0
-        while i_cur < i_best:
-            t = c.copy()
-            iter_s = c.difference(p)
-            i_t = self.calculate_IA(list(t))
-            max_ = 0
-            max_i = 2
-            for a in iter_s:
+        t = c.copy()
+        while i_cur >= threshold:
+            i_t = self.calculate_IA(list(t))  # 当前全部备选属性的I值
+            max_diff = 0  # 保存最大的变化值
+            max_index = -1  # 保存产生最大变化值的属性索引
+
+            # 计算每个属性去除后对I值的影响，取出最大的
+            for a in t:
                 t.remove(a)
                 i_without_a = self.calculate_IA(list(t))
                 diff = i_t - i_without_a
-                if 0 < diff < max_i:
-                    max_ = a
-                    max_i = diff
+                if diff > max_diff:
+                    max_diff = diff
+                    max_index = a
                 t.add(a)
-            p = p.union({max_})
-            i_cur = max_i
+
+            # 得到最大的变化属性, 同时保证得到的差异值大于给定的阈值
+            # 当得到的最大值已经不满足阈值时，结束约简
+            if max_index != -1 and max_diff >= threshold:
+                t.remove(max_index)
+                p = p.union({max_index})
+                i_cur = max_diff
+            else:
+                break
 
             print("Reduction set: ", p)
             print("Current I: ", i_cur)
