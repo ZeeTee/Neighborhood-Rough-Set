@@ -171,8 +171,18 @@ def calculate_sig_a(data, delta, a, B: set, D: dict):
     return sig_a
 
 
-if __name__ == '__main__':
+def trans_to_d(labels):
+    D = defaultdict(set)
+    for index, label in enumerate(labels):
+        D[label].add(index)
+    return D
 
+
+######################################################################
+
+
+if __name__ == '__main__':
+    # 日志设置
     LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
     DATE_FORMAT = "%m/%d/%Y %H:%M:%S %p"
     logging.basicConfig(level=logging.DEBUG,
@@ -184,6 +194,8 @@ if __name__ == '__main__':
     # prepare data
     # label = data[34].copy()
     # data = data.drop(34, axis=1)
+
+    # 数据
     data = pd.DataFrame(
         {0: [0.0909, 0, 0.4091, 0.6364, 1.0000, 0.9091, 0.9545, 0.6818],
          1: [1.0000, 0.3750, 0, 0.7500, 0.3750, 0.5000, 0.6250, 0.6250],
@@ -200,7 +212,9 @@ if __name__ == '__main__':
 
     enc = OrdinalEncoder()
     label = enc.fit_transform(label.values.reshape(-1, 1))
-    D = trans_to_d(label)
+
+    # 将D转化为{类别：样本集} => {类别1: {样本id...}, 类别2: {样本id...}...}
+    D = trans_to_d(label.reshape(-1))
 
     red = set()  # 约间集
     A = set([x for x in range(3)])  # 属性集A
