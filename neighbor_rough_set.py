@@ -15,7 +15,7 @@ class NeighborhoodRoughSet:
     """
     def __init__(self,  data: pd.DataFrame, attrs: [], delta=0.2):
         # 邻域半径
-        self._delta = 0
+        self._delta = delta
         # 样本个数
         self._n = 0
         # 条件属性数
@@ -172,6 +172,11 @@ def calculate_sig_a(data, delta, a, B: set, D: dict):
 
 
 def trans_to_d(labels):
+    """
+    将标签列表转化为{类别：样本集}的格式
+    :param labels:
+    :return:
+    """
     D = defaultdict(set)
     for index, label in enumerate(labels):
         D[label].add(index)
@@ -189,9 +194,9 @@ if __name__ == '__main__':
                         format=LOG_FORMAT,
                         datefmt=DATE_FORMAT)
 
+    # prepare data
     # data = pd.read_csv('/Volumes/Seagate Backup Plus Drive/UCI/wdbc/wdbc.csv',
     #                   header=None)
-    # prepare data
     # label = data[34].copy()
     # data = data.drop(34, axis=1)
 
@@ -206,10 +211,12 @@ if __name__ == '__main__':
     # data = data.drop([0, 1], axis=1)
     # data = pd.DataFrame(data.values, columns=[x for x in range(30)])
 
+    # 标准化
     # sca = MinMaxScaler()
     # sca_data = sca.fit_transform(data)
     # sca_data = pd.DataFrame(sca_data)
 
+    # 标签编码
     enc = OrdinalEncoder()
     label = enc.fit_transform(label.values.reshape(-1, 1))
 
