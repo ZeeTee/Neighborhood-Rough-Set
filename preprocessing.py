@@ -3,9 +3,10 @@
 # @Author  : zeetng
 
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder
+from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 import matplotlib.pyplot as plt
 import seaborn as sns
+from collections import defaultdict
 
 # ---------------包含数据预处理的各种操作-------------------------
 
@@ -21,16 +22,20 @@ DATA_PATH = 'dataset/wine.csv'
 def get_data(path=DATA_PATH, norm=True):
     """
     根据给定的路径获取数据集
-    :param path: path of dataset
-    :param norm: normalize or not
-    :return: dataset
+    :param path: String, path of dataset
+    :param norm: Bool, normalize or not
+    :return: DataFrame,
     """
 
     # 读取数据
-    raw_data = pd.read_csv(DATA_PATH, header=None)
+    raw_data = pd.read_csv(path, header=None)
 
     # 分离标签
     labels = raw_data.pop(0)
+    enc = LabelEncoder()
+    enc_labels = enc.fit_transform(labels)
+
+    labels = pd.DataFrame(enc_labels)
     data = pd.DataFrame(raw_data.values)
 
     # 标准化
@@ -38,19 +43,19 @@ def get_data(path=DATA_PATH, norm=True):
     sca_data = sca.fit_transform(data)
     scaled_data = pd.DataFrame(sca_data)
     if norm:
-        return scaled_data, labels.values
+        return scaled_data, labels
     else:
-        return data, labels.values
+        return data, labels
 
 
 def get_partial_labeled_data(ratio, path=DATA_PATH, norm=True, seed=34):
     """
     获取部分标记数据
-    :param seed: 随取采样的种子
-    :param norm: 是否归一化
-    :param path: 读取数据路径
-    :param ratio: 未标记数据比例
-    :return:
+    :param seed: Int, 随取采样的种子
+    :param norm: Bool, 是否归一化
+    :param path: String, 读取数据路径
+    :param ratio: Float, 未标记数据比例
+    :return: DataFrame
     """
     raw, labels = get_data(path, norm)
     # 按比例划分标记与未标记数据
@@ -61,7 +66,15 @@ def get_partial_labeled_data(ratio, path=DATA_PATH, norm=True, seed=34):
     return labeled, label.values, unlabeled
 
 
-# if __name__ == '__main__':
-#     get_spilt_data(0.1)
+def trans_to_d(labels):
+    """
+    将标签列表转化为{类别：样本集}的格式,
+    :param labels:
+    :return:
+    """
+    D = defaultdict(set)
+    for index, label in enumerate(labels):
+        D[label].add(index)
+    return D
 
 
