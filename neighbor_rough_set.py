@@ -21,10 +21,12 @@ class NeighborhoodRoughSet:
         # 条件属性数
         self._c = 0
         self._attrs = attrs
+        # 样本
+        self.data = data
         # 邻域粒子族(邻域粒化空间)
         self.group_grans = defaultdict(set)
         # 粒化
-        self.granulate(data, attrs, delta)
+        self.granulate(data, attrs, self._delta)
         #
         self.isLASCalculate = False
         self.__lower_approximation_set = set()
@@ -55,13 +57,27 @@ class NeighborhoodRoughSet:
         else:
             data = data[attrs].values
 
+        # 距离函数
         def __euclidean_dist(_x, matrix):
             return np.sqrt(np.sum(np.square(_x-matrix), axis=1))
 
         for sample_i in range(n):
+            # 传统方法
             ed = __euclidean_dist(data[sample_i, :], data) <= self._delta
+            # 新方法
+            # dist = __euclidean_dist(data[sample_i, :], data)
+            # dist = np.delete(dist, sample_i, 0)  # 排除样本自己
+            # radius = min(dist) + delta * (max(dist) - min(dist))
+            # ed = dist <= radius
+            # ed = np.insert(ed, sample_i, True)
             _id = np.arange(n)[ed]
             self.group_grans[sample_i] = set(_id)
+
+    def compute_granular_card(self):
+        cnt = 0
+        for k, v in self.group_grans.items():
+            cnt += len(v)
+        return cnt
 
     def _lower_approximate(self, x: set):
         """
