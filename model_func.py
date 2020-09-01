@@ -232,7 +232,7 @@ def proposed_model():
     return A
 
 
-def my_model(neighbor_delta, labeled_data, unlabeled_data, labels):
+def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, alpha, beta):
     """
 
     :param neighbor_delta: float, 邻域半径
@@ -278,7 +278,7 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels):
 
         def __diff_samples(self, k):
             """
-            计算样本k领域内和同类的样本
+            计算样本k邻域内同类的样本数量
             :param k: index
             :return:
             """
@@ -305,13 +305,13 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels):
             cnt = 0
             if len(self.data) == 0:
                 return cnt
-
+            # 遍历所有样本
             for key in self.group_grans.keys():
                 cnt += self.n - len(self.__diff_samples(key))
             return cnt
 
         def compute_dis(self):
-            return self.l_dis() / pow(self.n, 2) if len(self.labels) else self.u_dis() / pow(self.n, 2)
+            return self.l_dis() / (pow(self.n, 2) - self.n) if len(self.labels) else self.u_dis() / (pow(self.n, 2)-self.n)
 
     # 读取数据
     # print("读取数据......")
@@ -330,7 +330,7 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels):
             return 0
         model_un = SemiRoughSet(unlabeled_data, list(attrs), delta)
         model_la = SemiRoughSet(labeled_data, list(attrs), delta, labels)
-        ds = model_un.compute_dis() + model_la.compute_dis()
+        ds = beta * model_un.compute_dis() + alpha * model_la.compute_dis()
         return ds
 
     def imp(a, t: set):
@@ -374,17 +374,18 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels):
 
 if __name__ == '__main__':
     # 超参数
-    data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/wdbc.csv'
+    data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/ecoli.csv'
     radio = 0.3
     k_fold = 10
     valid_size = 0.11
+    alpha = 0.8
+    beta = 0.2
     res = []
 
     reader = ReadData(data_path)
 
     for r in [0.3, 0.5, 0.7]:  # 未标签率
-        for d in np.arange(0.1, 0.52, 0.02):  # 邻域半径
-
+        for d in [0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]:  # w
             red_size = 0
             acc_v = 0.0
             acc_t = 0.0
@@ -394,7 +395,7 @@ if __name__ == '__main__':
             for i, x_train, x_valid, x_test, y_train, y_valid, y_test in reader.get_k_fold(k_fold, valid_size):
                 # 分割有无标签的数据集
                 x_labeled, x_unlabeled, y_labeled, _ = split_unlabel_data(x_train, y_train, r)
-                red, ds = my_model(d, x_labeled, x_unlabeled, y_labeled)
+                red, ds = my_model(d, x_labeled, x_unlabeled, y_labeled, alpha, beta)
                 # red = [0, 1, 2, 3, 4, 5, 6, 7, 8]
                 # ds = 1
                 red_size += len(red)
