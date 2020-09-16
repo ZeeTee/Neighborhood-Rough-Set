@@ -8,10 +8,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.svm import SVC
+from datetime import datetime, date, time
 
-from preprocessing import get_partial_labeled_data, trans_to_d, get_data, semi_labels_trans, ReadData, split_unlabel_data
+from preprocessing import get_partial_labeled_data, trans_to_d, get_data, semi_labels_trans, ReadData, \
+    split_unlabel_data, DATASET_NUME_ATTRS
 from neighbor_rough_set import NeighborhoodRoughSet
-from utils import map_to_dps, group_by_label
+from utils import map_to_dps, group_by_label, get_log_file
 
 
 def dis_matrix():
@@ -41,11 +43,13 @@ def feature_selection_neighborhood_rs():
     # 参数
     delta = 0.11
     data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/wine.csv'
+
     # ----------------------------------------------------------------------
 
     def sig(a, red: set):
-        return NeighborhoodRoughSet(labeled_data, list(red.union({a})), delta).dependency_to_b(D)\
+        return NeighborhoodRoughSet(labeled_data, list(red.union({a})), delta).dependency_to_b(D) \
                - NeighborhoodRoughSet(labeled_data, list(red), delta).dependency_to_b(D)
+
     # 读取数据
     print("读取数据......")
     labeled_data, labels = get_data(data_path)
@@ -86,6 +90,7 @@ def semi_neighbor_rs():
     delta = 0.1
     alpha = 0.8
     beta = 0.2
+
     # ----------------------------------------------------------------------
     # 半监督邻域粗糙集模型
 
@@ -100,7 +105,7 @@ def semi_neighbor_rs():
         return alpha * (gama / atl) + beta * (atul / det)
 
     def sig(a, A: set):
-        return imp(A.union({a}))-imp(A)
+        return imp(A.union({a})) - imp(A)
 
     # ----------------------------------------------------------------------
     # 读取数据
@@ -150,17 +155,18 @@ def proposed_model():
     alpha = 0.8
     beta = 0.1
     gamma = 0.1
+
     # ----------------------------------------------------------------------
     # 半监督邻域粗糙集模型
 
     class NeighborSemiRoughSet(NeighborhoodRoughSet):
-        def __init__(self, data, attrs, labels: dict, delta):
-            super(NeighborSemiRoughSet, self).__init__(data, attrs, delta)
+        def __init__(self, data, attrs, nume_attrs, labels: dict, delta):
+            super(NeighborSemiRoughSet, self).__init__(data, attrs, nume_attrs, delta)
             self.labels = labels
             self._l1 = set()  # 正域
             self._l2 = set()  # 边界域
             self._l3 = set()  # 不确定
-            self.label_name = [x for x in range(len(labels)-1)]
+            self.label_name = [x for x in range(len(labels) - 1)]
             self.grouped_sample()
 
         def grouped_sample(self):
@@ -191,7 +197,7 @@ def proposed_model():
     def sig(a, A: set):
         sig_u = NeighborSemiRoughSet(data, list(A.union({a})), D, delta).imp(alpha, beta, gamma, nc)
         sig_a = NeighborSemiRoughSet(data, list(A), D, delta).imp(alpha, beta, gamma, nc)
-        return sig_u, sig_a, sig_u-sig_a
+        return sig_u, sig_a, sig_u - sig_a
 
     # 读取数据
     print("读取数据......")
@@ -232,9 +238,12 @@ def proposed_model():
     return A
 
 
-def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, alpha, beta):
+def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, name, alpha, f):
     """
 
+    :param f: logout file
+    :param alpha: radio of labeled data
+    :param name: name of dataset
     :param neighbor_delta: float, 邻域半径
     :param labeled_data: ndarray
     :param unlabeled_data: ndarray
@@ -244,20 +253,20 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, alpha, beta):
     # 参数
     # data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/wine.csv'
     delta = neighbor_delta
+    beta = 1 - alpha
     # radio = radio
 
     # 模型
     class SemiRoughSet(NeighborhoodRoughSet):
-        def __init__(self, data, attrs, delta, labels=None):
+        def __init__(self, data, attrs, nume_attrs, delta, labels=None):
             """
-
             :param data: 数据
             :param attrs: 属性列表 list
             :param delta: 邻域半径
             :param labels: 标签
             """
             # 调用父类，建立邻域
-            super(SemiRoughSet, self).__init__(data, attrs, delta)
+            super(SemiRoughSet, self).__init__(data, attrs, nume_attrs, delta)
             if labels is None:
                 self.labels = []
             else:
@@ -311,39 +320,44 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, alpha, beta):
             return cnt
 
         def compute_dis(self):
-            return self.l_dis() / (pow(self.n, 2) - self.n) if len(self.labels) else self.u_dis() / (pow(self.n, 2)-self.n)
-
-    # 读取数据
-    # print("读取数据......")
-    # labeled_data, labels, unlabeled = get_partial_labeled_data(path=data_path, ratio=radio)
-    # labeled_data, labels = get_data(data_path)
-
-    print("初始化......")
-    labeled_data = pd.DataFrame(labeled_data)
-    unlabeled_data = pd.DataFrame(unlabeled_data)
-
-    attr = list(labeled_data.columns)  # 条件属性集
-    # D = trans_to_d(labels.reshape(-1))  # 将决策属性转化格式
+            return self.l_dis() / (pow(self.n, 2) - self.n) if len(self.labels) else self.u_dis() / (
+                        pow(self.n, 2) - self.n)
 
     def measure(attrs):
         if len(attrs) == 0:
             return 0
-        model_un = SemiRoughSet(unlabeled_data, list(attrs), delta)
-        model_la = SemiRoughSet(labeled_data, list(attrs), delta, labels)
+        # 计算数值属性集
+        n_attrs = nume_attrs.intersection(attrs)
+        model_un = SemiRoughSet(unlabeled_data, list(attrs), list(n_attrs), delta)
+        model_la = SemiRoughSet(labeled_data, list(attrs), list(n_attrs), delta, labels)
         ds = beta * model_un.compute_dis() + alpha * model_la.compute_dis()
         return ds
 
     def imp(a, t: set):
         m_ta = measure(t.union({a}))
         m_t = measure(t)
-        diff = measure(t.union({a})) - measure(t)
+        diff = m_ta - m_t
         return m_ta, m_t, diff
 
+    # --------------------------算法流程---------------------------
+    print("初始化数据......")
+    labeled_data = pd.DataFrame(labeled_data)
+    unlabeled_data = pd.DataFrame(unlabeled_data)
+
+    # 属性集
+    attr = list(labeled_data.columns)  # 条件属性集
+    nume_attrs = DATASET_NUME_ATTRS[name]  # 获取数值属性
+    # D = trans_to_d(labels.reshape(-1))  # 将决策属性转化格式
+    f.write("{}>> 算法开始运行\n".format(datetime.now()))
+    f.write("初始条件属性集: {}\n".format(attr))
+    f.write("数值属性集：{}\n".format(nume_attrs))
+
     # Algorithm
-    red = set()
-    mx_ds_red = 0
+    red = set()  # 约简集
+    mx_ds_red = 0  # 最大值
     attr = set(attr)
     dsc = measure(attr)
+    f.write("所有数据的measure值: {}\n".format(dsc))
 
     print("开始约简......")
     while True:
@@ -372,9 +386,10 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, alpha, beta):
     return red, mx_union
 
 
-if __name__ == '__main__':
+def run(root, file):
     # 超参数
-    data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/ecoli.csv'
+    # data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/ecoli.csv'
+    data_path = root + file + '.csv'
     radio = 0.3
     k_fold = 10
     valid_size = 0.11
@@ -382,45 +397,70 @@ if __name__ == '__main__':
     beta = 0.2
     res = []
 
-    reader = ReadData(data_path)
+    reader = ReadData(data_path, norm=False)
+    # 保存运行信息的文件
+    f = get_log_file(file)
 
     for r in [0.3, 0.5, 0.7]:  # 未标签率
-        for d in [0.01, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]:  # w
+        for d in np.arange(0.15, 0.31, 0.01):  # w
+
             red_size = 0
-            acc_v = 0.0
             acc_t = 0.0
             dis_m = 0.0
             print("--------------------------------------------")
+            f.write("--------------------------------------------\n")
+            f.write("当前未标签率: {}, 邻域半径: {}\n".format(r, d))
             print("当前未标签率: {}, 邻域半径: {}".format(r, d))
-            for i, x_train, x_valid, x_test, y_train, y_valid, y_test in reader.get_k_fold(k_fold, valid_size):
+            # 先分割数据集
+            for i, x_train, x_test, y_train, y_test in reader.get_k_fold(k_fold):
+                f.write("{}th fold:\n".format(i+1))
                 # 分割有无标签的数据集
                 x_labeled, x_unlabeled, y_labeled, _ = split_unlabel_data(x_train, y_train, r)
-                red, ds = my_model(d, x_labeled, x_unlabeled, y_labeled, alpha, beta)
-                # red = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-                # ds = 1
+
+                start_time = datetime.now()
+                red, ds = my_model(d, x_labeled, x_unlabeled, y_labeled, file, alpha, f)
+                end_time = datetime.now()
                 red_size += len(red)
                 dis_m += ds
                 print("第{}折约简结果: {}, ds: {}".format(i, list(red), ds))
-                # 根据约简结果重新处理数据
+                f.write("reduction: {}\nds: {}\nrunning time: {}s\n".format(list(red), ds, (end_time-start_time).seconds))
+
+                # Train SVM with raw data
+                clf = SVC()
+                clf.fit(x_labeled, y_labeled.ravel())
+                acc_test = clf.score(x_test, y_test.ravel())
+                f.write("accuracy of SVM with raw data: {}\n".format(acc_test))
+
+                # 根据约简结果处理数据
                 reduction = list(red)
-                x_labeled, x_valid, x_test = x_labeled[:, reduction], x_valid[:, reduction], x_test[:, reduction]
-                # SVM 分类
+                x_labeled, x_test = x_labeled[:, reduction], x_test[:, reduction]
+
+                # Train SVM with reduced data
                 clf = SVC()
                 clf.fit(x_labeled, y_labeled.ravel())
 
-                acc_valid = clf.score(x_valid, y_valid.ravel())
                 acc_test = clf.score(x_test, y_test.ravel())
-                print("第{}折SVM分类结果valid: {}, test: {}".format(i, acc_valid, acc_test))
-
-                acc_v += acc_valid
                 acc_t += acc_test
 
-            avg_red_size = red_size/k_fold
-            avg_ds = dis_m/k_fold
-            avg_acc_valid = acc_v/k_fold
-            avg_acc_test = acc_t/k_fold
-            print("约简长度: {}, 准确率: {}".format(avg_red_size, avg_acc_test))
-            res.append([r, d, avg_red_size, avg_ds, avg_acc_valid, avg_acc_test])
+                print("第{}折SVM分类结果test: {}".format(i, acc_test))
+                f.write("accuracy of SVM with reduced data: {}\n".format(acc_test))
+                f.write("--------------------------------------------------------\n")
 
-    df = pd.DataFrame(res, columns=['radio', 'delta', 'reduction-size', 'ds',  'valid-accuracy', 'test-accuracy'])
-    df.to_excel("wdbc-results.xlsx")
+            avg_red_size = red_size / k_fold
+            avg_ds = dis_m / k_fold
+            avg_acc_test = acc_t / k_fold
+
+            print("约简长度: {}, 准确率: {}".format(avg_red_size, avg_acc_test))
+            res.append([alpha, r, d, avg_red_size, avg_ds, avg_acc_test])
+
+    df = pd.DataFrame(res, columns=['alpha', 'unlabeled-radio', 'radius', 'reduction-size', 'ds', 'test-accuracy'])
+    df.to_excel("results/{}-results.xlsx".format(file))
+    f.close()
+    print("{}运行结束".format(file))
+
+
+if __name__ == '__main__':
+    files = ['wine', 'wdbc', 'ecoli', 'BreastTissue', 'seeds', 'ionosphere', 'parkinsons', 'glass', 'dermatology', 'german', 'yeast', 'segment']
+    root = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/'
+    for file in files:
+        run(root, file)

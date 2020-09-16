@@ -2,6 +2,7 @@
 # @Time    : 2020/3/23 21:28
 # @Author  : zeetng
 import numpy as np
+import pandas as pd
 from utils import map_to_dps
 
 
@@ -19,45 +20,67 @@ class DP_NRS:
 
         self.labels = np.asarray(labels).reshape(-1, 1)
         assert self._ln == len(labels)
+
         # 全体属性DP集
         self.u_dpc = self.calculate_dp([], 'unlabeled', C=True)
         self.l_dpc = self.calculate_dp([], 'labeled', C=True)
         #
         self.len_u_dpc = len(self.u_dpc)
         self.len_l_dpc = len(self.l_dpc)
+        # 保存每个样本的邻域
+        self.group_grans = dict()
 
-    def __un_label_dp(self, u_data):
+    def compute_neibors(self, data: pd.DataFrame, attrs: [], delta):
         """
-        为无标签样本计算邻域差别对
-        :param u_data:
+        根据给定的数据和属性索引建立每个样本的邻域粒子,并将结果保存在字典group_grans中。
+        其中默认使用样本索引作为每个样本的id。
+
+        :param delta: 邻域半径
+        :param data: DataFrame类型的数据
+        :param attrs: 属性的索引
         :return:
         """
-        _udp = set()
-        if len(u_data) == 0:
-            return _udp
-        for i in u_data:
-            bool_dis = np.any(u_data - i > self.delta, axis=1)
-            _out = np.where(bool_dis)[0]
-            _in = np.where(~bool_dis)[0]
-            _udp = _udp.union(map_to_dps(_in, _out))
-        return _udp
+        if data is None:
+            raise ValueError("无效的输入数据", data)
 
-    def __label_dp(self, l_data, labels):
+        n, c = data.shape
+
+        if len(attrs) > c:
+            raise ValueError("无效的属性列表", attrs)
+        else:
+            data = data[attrs].values
+
+        # 距离函数
+        def __euclidean_dist(_x, matrix):
+            return np.sqrt(np.sum(np.square(_x-matrix), axis=1))
+
+        for sample_i in range(n):
+            # 传统方法
+            # ed = __euclidean_dist(data[sample_i, :], data) <= self._delta
+            # 新方法
+            dist = __euclidean_dist(data[sample_i, :], data)
+            dist = np.delete(dist, sample_i, 0)  # 排除样本自己
+            radius = min(dist) + delta * (max(dist) - min(dist))
+            ed = dist <= radius
+            ed = np.insert(ed, sample_i, True)
+            _id = np.arange(n)[ed]
+            self.group_grans[sample_i] = set(_id)
+
+    def __dps_func(self, l_data):
         """
-        为有标签数据计算邻域差别对
+        计算邻域差别对， 只考虑属性间距离，不考虑其他因素
         :param l_data:
-        :param labels:
         :return:
         """
         _ldp = set()
         if len(l_data) == 0:
             return _ldp
-        for i, label in zip(l_data, labels):
+        for i in l_data:
             bool_dis_attr = np.any(l_data-i > self.delta, axis=1)
-            bool_dis_label = np.any(labels != label, axis=1)
-            stacked_bool = np.all(np.stack((bool_dis_attr, bool_dis_label)).T, axis=1)
-            _out = np.where(stacked_bool)[0]
-            _in = np.where(~stacked_bool)[0]
+            # bool_dis_label = np.any(labels != label, axis=1)
+            # stacked_bool = np.all(bool_dis_attr)
+            _out = np.where(bool_dis_attr)[0]
+            _in = np.where(~bool_dis_attr)[0]
             _ldp = _ldp.union(map_to_dps(_in, _out))
         return _ldp
 
@@ -71,13 +94,13 @@ class DP_NRS:
         """
         if datatype == 'labeled':
             data = self.labeled_data.values if C else self.labeled_data[attrs].values
-            dp = self.__label_dp(data, self.labels)
+            dp = self.__dps_func(data)
         else:
             if not self.unlabeled_data:
                 dp = set()
             else:
                 data = self.unlabeled_data.values if C else self.unlabeled_data[attrs].values
-                dp = self.__un_label_dp(data)
+                dp = self.__dps_func(data)
         return dp
 
     def calculate_IA(self, A):
@@ -89,13 +112,13 @@ class DP_NRS:
         # u = len(dp_u.symmetric_difference(self.u_dpc))/(self.len_u_dpc + len(dp_u))
         return 1-l
 
-    def run_reduction(self, no_iter, algorithm):
+    def run_reduction(self, no_iter, algorithm, threshold):
         if algorithm == "forward":
             print("运行正向约简算法")
             self.run_forward(no_iter)
         else:
             print("运行后向约简算法")
-            self.run_backward()
+            self.run_backward(threshold)
 
     def run_forward(self, no_iter):
         print("初始化......")

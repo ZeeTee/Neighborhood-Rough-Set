@@ -5,73 +5,140 @@ import math
 from collections import defaultdict, Counter
 import pandas as pd
 import numpy as np
+import numpy.ma as ma
 from sklearn.preprocessing import MinMaxScaler, OrdinalEncoder
 import logging
+
+from preprocessing import get_data
 
 
 class NeighborhoodRoughSet:
     """
     建立邻域粗糙集模型
     """
-    def __init__(self,  data: pd.DataFrame, attrs: [], delta=0.2):
+    def __init__(self,
+                 data: pd.DataFrame,
+                 attrs: [],
+                 nume_attrs: [],
+                 delta=0.2,
+                 delta_type='constant'):
         # 邻域半径
-        self._delta = delta
-        # 样本个数
-        self._n = 0
-        # 条件属性数
-        self._c = 0
-        self._attrs = attrs
+        self.delta_type = delta_type  # 'variable' or 'constant'
+        self.delta = delta
         # 样本
         self.data = data
+
+        n, c = self.data.shape
+        # 样本个数
+        self.n = n
+        # 条件属性数
+        self.c = c
+        self.all_attrs = set(attrs)
+        self.all_nume_attrs = set(nume_attrs)
+        self.all_cate_attrs = set(attrs).difference(set(nume_attrs))
+        self.attrs, self.cate_attrs, self.nume_attrs = \
+            list(self.all_attrs), list(self.all_cate_attrs), list(self.all_nume_attrs)
+
+        # 由于保存样本间的距离
+        self.distance = pd.DataFrame([[-1]*n for _ in range(n)])
+
         # 邻域粒子族(邻域粒化空间)
         self.group_grans = defaultdict(set)
         # 粒化
-        self.granulate(data, attrs, self._delta)
-        #
-        self.isLASCalculate = False
-        self.__lower_approximation_set = set()
-        self.isUASCalculate = False
-        self.__upper_approximation_set = set()
+        self.granulate()
 
-    def granulate(self, data: pd.DataFrame, attrs: [], delta):
+        # 上下近似集
+        # self.isLASCalculate = False
+        # self.__lower_approximation_set = set()
+        # self.isUASCalculate = False
+        # self.__upper_approximation_set = set()
+
+    def granulate(self):
         """
         粒化操作，根据给定的数据和属性索引建立每个样本的邻域粒子
         并保存在group_grans中。每个邻域粒子都是一个集合，其中
         保存邻域样本的id, 默认使用样本索引作为每个样本的id。
 
-        :param delta: 邻域半径
-        :param data: DataFrame类型的数据
-        :param attrs: 属性的索引
-        :return:
         """
-        if data is None:
-            raise ValueError("无效的输入数据", data)
+        if self.data is None:
+            raise ValueError("无效的输入数据", self.data)
 
-        n, c = data.shape
-        self._delta = delta
-        self._n = n
-        self._c = c
-
-        if len(attrs) > c:
-            raise ValueError("无效的属性列表", attrs)
-        else:
-            data = data[attrs].values
+        if len(self.attrs) > self.c:
+            raise ValueError("无效的属性列表", self.attrs)
 
         # 距离函数
         def __euclidean_dist(_x, matrix):
             return np.sqrt(np.sum(np.square(_x-matrix), axis=1))
 
-        for sample_i in range(n):
-            # 传统方法
-            ed = __euclidean_dist(data[sample_i, :], data) <= self._delta
-            # 新方法
-            # dist = __euclidean_dist(data[sample_i, :], data)
-            # dist = np.delete(dist, sample_i, 0)  # 排除样本自己
-            # radius = min(dist) + delta * (max(dist) - min(dist))
-            # ed = dist <= radius
-            # ed = np.insert(ed, sample_i, True)
-            _id = np.arange(n)[ed]
-            self.group_grans[sample_i] = set(_id)
+        # 用于计算类别与数值属性混合距离的函数
+        def __heom_dist(x: np.ndarray, y: np.ndarray, cates, numes, attrs_max, attrs_min):
+            """
+            计算HEOM距离
+            :param x: 样本x
+            :param y: 样本y
+            :param numes: 数值属性集
+            :param attrs_max: 每个属性的最大值列表
+            :param attrs_min: 每个属性的最小值列表
+            :return:
+            """
+            size = len(cates) + len(numes)
+            # 计算类别属性的距离
+            overlap = np.sum(np.not_equal(x[cates], y[:, cates]).astype(int), axis=1)
+            # 计算数值属性的距离
+            ab_diff = np.abs(x[numes] - y[:, numes])
+            interval = attrs_max[numes] - attrs_min[numes]
+            rn_diff = np.sum(np.square(np.divide(ab_diff, interval)), axis=1)  # 类似于最大最小归一化
+
+            return np.sqrt(np.add(overlap, rn_diff) / size)
+
+        # 计算样本间的距离
+        for si in range(self.n):
+            self.distance.loc[si, si:] = self.distance.loc[si:, si] = __heom_dist(
+                self.data.loc[si, :].values,
+                self.data.loc[si:, :].values,
+                self.cate_attrs,
+                self.nume_attrs,
+                self.data.max().values,
+                self.data.min().values)
+
+        # 当采用数据依赖的邻域半径时，根据数据间距离计算邻域半径
+        if self.delta_type == 'variable':
+            mask = np.ones(self.distance.shape, dtype=bool)
+            np.fill_diagonal(mask, 0)
+            max_dist = self.distance.values[mask].max()
+            min_dist = self.distance.values[mask].min()
+            self.delta = min_dist + self.delta * (max_dist - min_dist)
+
+        # 统计邻域的元素
+        mask = np.ones(self.n, dtype=bool)
+        for si in range(self.n):
+            mask[si] = False
+            neighbors = np.where(self.distance.values[si, mask] < self.delta)
+            self.group_grans[si] = set(neighbors[0])
+
+        # for sample_i in range(self.n):
+        #     # 传统方法
+        #     ed = __euclidean_dist(self.data.loc[sample_i, :].values, self.data.values) <= self._delta
+        #     # 新方法
+        #     dist = __euclidean_dist(data[sample_i, :], data)
+        #     dist = np.delete(dist, sample_i, 0)  # 排除样本自己
+        #     radius = min(dist) + self.delta * (max(dist) - min(dist))
+        #     ed = dist <= radius
+        #     ed = np.insert(ed, sample_i, True)
+        #     _id = np.arange(self.n)[ed]
+        #     self.group_grans[sample_i] = set(_id)
+
+    def rebuild(self, attrs):
+        """
+        根据给定的属性集重建邻域粗糙集模型
+        :param attrs:
+        :return:
+        """
+        self.attrs = attrs
+
+        self.nume_attrs = set(self.attrs).intersection(set(self.nume_attrs))
+        self.cate_attrs = set(self.attrs).intersection(set(self.cate_attrs))
+        self.granulate()
 
     def compute_granular_card(self):
         cnt = 0
@@ -116,11 +183,12 @@ class NeighborhoodRoughSet:
             raise ValueError("输入错误")
         if not self.group_grans:
             raise ValueError("未建立邻域粒空间")
+
         las = set()
         for value in X.values():
             s = self._lower_approximate(value)
             las = las.union(s)
-        self.__lower_approximation_set = las
+
         return las
 
     def get_upper_approximation(self, X: dict):
@@ -134,11 +202,12 @@ class NeighborhoodRoughSet:
             raise ValueError("输入错误")
         if not self.group_grans:
             raise ValueError("未建立邻域粒空间")
+
         uas = set()
         for value in X.values():
             s = self._upper_approximate(value)
             uas = uas.union(s)
-        self.__upper_approximation_set = uas
+
         return uas
 
     def get_boundary(self, X: dict):
@@ -155,13 +224,11 @@ class NeighborhoodRoughSet:
             raise ValueError("输入错误")
         if not self.group_grans:
             raise ValueError("未建立邻域粒空间")
-        if not self.isLASCalculate:
-            _ = self.get_lower_approximation(D)
-        if not self.isUASCalculate:
-            _ = self.get_upper_approximation(D)
+        las = self.get_lower_approximation(D)
+        # ups = self.get_upper_approximation(D)
 
-        logging.info("当前属性集:{}，当前下近似集:{}".format(self._attrs, self.__lower_approximation_set))
-        gama = len(self.__lower_approximation_set) / self._n
+        logging.info("当前属性集:{}，当前下近似集:{}".format(self.attrs, las))
+        gama = len(las) / self.n
         return gama
 
 
@@ -181,7 +248,7 @@ def calculate_sig_a(data, delta, a, B: set, D: dict):
     :param D: 决策属性集
     :return: 重要度
     """
-    ab_nrs = NeighborhoodRoughSet(data, list(B.union({a})), delta)
+    ab_nrs = NeighborhoodRoughSet(data, list(B.union({a})), [0, 1], delta)
     b_nrs = NeighborhoodRoughSet(data, list(B), delta)
     sig_a = ab_nrs.dependency_to_b(D) - b_nrs.dependency_to_b(D)
     return sig_a
@@ -197,6 +264,17 @@ def trans_to_d(labels):
     for index, label in enumerate(labels):
         D[label].add(index)
     return D
+
+
+def bool_num_attrs(attrs: list, size: int):
+    """
+    用于将[0, 2,...,n]形式的数值属性集转换为[True, False, ..., True]的Bool集
+    :param attrs:
+    :param size:
+    :return:
+    """
+    attrs = set(attrs)
+    return [True if x in attrs else False for x in range(size)]
 
 
 ######################################################################
@@ -215,15 +293,16 @@ if __name__ == '__main__':
     #                   header=None)
     # label = data[34].copy()
     # data = data.drop(34, axis=1)
+    data, label = get_data('dataset/dermatology.csv', False)
 
     # 数据
-    data = pd.DataFrame(
-        {0: [0.0909, 0, 0.4091, 0.6364, 1.0000, 0.9091, 0.9545, 0.6818],
-         1: [1.0000, 0.3750, 0, 0.7500, 0.3750, 0.5000, 0.6250, 0.6250],
-         2: [1, 1, 1, 1, 2, 2, 2, 1],
-         3: ['Setosa', 'Setosa', 'Virginica', 'Virginica', 'Virginica', 'Versicolor', 'Versicolor', 'Versicolor']}
-    )
-    label = data[3].copy()
+    # data = pd.DataFrame(
+    #     {0: [0, 0, 0.4091, 0.6364, 1.0000, 0.9091, 0.9545, 0.6818],
+    #      1: [1, 0.3750, 0, 0.7500, 0.3750, 0.5000, 0.6250, 0.6250],
+    #      2: [1, 1, 1, 1, 2, 2, 2, 1],
+    #      3: ['Setosa', 'Setosa', 'Virginica', 'Virginica', 'Virginica', 'Versicolor', 'Versicolor', 'Versicolor']}
+    # )
+    # label = data[3].copy()
     # data = data.drop([0, 1], axis=1)
     # data = pd.DataFrame(data.values, columns=[x for x in range(30)])
 
@@ -233,11 +312,13 @@ if __name__ == '__main__':
     # sca_data = pd.DataFrame(sca_data)
 
     # 标签编码
-    enc = OrdinalEncoder()
-    label = enc.fit_transform(label.values.reshape(-1, 1))
+    # enc = OrdinalEncoder()
+    # label = enc.fit_transform(label.values.reshape(-1, 1))
 
     # 将D转化为{类别：样本集} => {类别1: {样本id...}, 类别2: {样本id...}...}
-    D = trans_to_d(label.reshape(-1))
+    # D = trans_to_d(label.reshape(-1))
+    D = dict()
+    NeighborhoodRoughSet(data, [x for x in range(34)], [33], 0.5, delta_type='variable')
 
     red = set()  # 约间集
     A = set([x for x in range(3)])  # 属性集A

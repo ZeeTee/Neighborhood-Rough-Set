@@ -37,13 +37,15 @@ logging.basicConfig(level=logging.DEBUG,
 
 # enc = OrdinalEncoder()
 # label = enc.fit_transform(label.values.reshape(-1, 1))
-labeled_data, labels, unlabeled_data = preprocessing.get_spilt_data(0.1)
-# n_sample, n_attrs = data.shape
+# labeled_data, labels, unlabeled_data = preprocessing.get_spilt_data(0.1)
+# 获取数据
+data, labels = preprocessing.get_data()
+n_sample, n_attrs = data.shape
 
 red = set()  # 约间集
-A = list(labeled_data.columns)  # 属性集A
+A = list(data.columns)  # 属性集A
 
-d_nrs = DP_NRS(labeled_data, labels, unlabeled_data, 0.13)
-d_nrs.run_reduction(100)
-# d_nrs.run_backward()
+d_nrs = DP_NRS(data, labels, None, 0.11)
+# d_nrs.run_reduction(100)
+d_nrs.run_backward(0.003)
 
