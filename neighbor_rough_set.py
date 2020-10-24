@@ -21,9 +21,19 @@ class NeighborhoodRoughSet:
                  attrs: [],
                  nume_attrs: [],
                  delta=0.2,
-                 delta_type='constant'):
+                 delta_type='constant',
+                 dist_func='HEOM'):
+        """
+
+        :param data:
+        :param attrs:
+        :param nume_attrs:
+        :param delta:
+        :param delta_type: 'variable' or 'constant'
+        :param dist_func: "HEOM" or "EUCD"
+        """
         # 邻域半径
-        self.delta_type = delta_type  # 'variable' or 'constant'
+        self.delta_type = delta_type
         self.delta = delta
         # 样本
         self.data = data
@@ -34,12 +44,13 @@ class NeighborhoodRoughSet:
         # 条件属性数
         self.c = c
         self.all_attrs = set(attrs)
-        self.all_nume_attrs = set(nume_attrs)
-        self.all_cate_attrs = set(attrs).difference(set(nume_attrs))
+        self.all_nume_attrs = set(nume_attrs).intersection(self.all_attrs)
+        self.all_cate_attrs = self.all_attrs.difference(self.all_nume_attrs)
         self.attrs, self.cate_attrs, self.nume_attrs = \
             list(self.all_attrs), list(self.all_cate_attrs), list(self.all_nume_attrs)
 
         # 由于保存样本间的距离
+        self.dist_func = dist_func
         self.distance = pd.DataFrame([[-1]*n for _ in range(n)])
 
         # 邻域粒子族(邻域粒化空间)
@@ -58,7 +69,6 @@ class NeighborhoodRoughSet:
         粒化操作，根据给定的数据和属性索引建立每个样本的邻域粒子
         并保存在group_grans中。每个邻域粒子都是一个集合，其中
         保存邻域样本的id, 默认使用样本索引作为每个样本的id。
-
         """
         if self.data is None:
             raise ValueError("无效的输入数据", self.data)
@@ -67,8 +77,8 @@ class NeighborhoodRoughSet:
             raise ValueError("无效的属性列表", self.attrs)
 
         # 距离函数
-        def __euclidean_dist(_x, matrix):
-            return np.sqrt(np.sum(np.square(_x-matrix), axis=1))
+        def __euclidean_dist(_x, matrix, nume_attrs):
+            return np.sqrt(np.sum(np.square(_x[nume_attrs]-matrix[:, nume_attrs]), axis=1))
 
         # 用于计算类别与数值属性混合距离的函数
         def __heom_dist(x: np.ndarray, y: np.ndarray, cates, numes, attrs_max, attrs_min):
@@ -82,51 +92,65 @@ class NeighborhoodRoughSet:
             :return:
             """
             size = len(cates) + len(numes)
+            if size == 0:
+                return np.zeros(y.shape[0])
             # 计算类别属性的距离
             overlap = np.sum(np.not_equal(x[cates], y[:, cates]).astype(int), axis=1)
             # 计算数值属性的距离
             ab_diff = np.abs(x[numes] - y[:, numes])
-            interval = attrs_max[numes] - attrs_min[numes]
-            rn_diff = np.sum(np.square(np.divide(ab_diff, interval)), axis=1)  # 类似于最大最小归一化
-
-            return np.sqrt(np.add(overlap, rn_diff) / size)
+            # interval = attrs_max[numes] - attrs_min[numes]
+            rn_diff = np.sum(np.square(ab_diff), axis=1)
+            dist = np.sqrt(np.add(overlap, rn_diff) / size)
+            return dist
 
         # 计算样本间的距离
-        for si in range(self.n):
-            self.distance.loc[si, si:] = self.distance.loc[si:, si] = __heom_dist(
-                self.data.loc[si, :].values,
-                self.data.loc[si:, :].values,
-                self.cate_attrs,
-                self.nume_attrs,
-                self.data.max().values,
-                self.data.min().values)
+        if self.dist_func == "HEOM":
+            for si in range(self.n):
+                self.distance.loc[si, si:] = self.distance.loc[si:, si] = __heom_dist(
+                    self.data.loc[si, :].values,
+                    self.data.loc[si:, :].values,
+                    self.cate_attrs,
+                    self.nume_attrs,
+                    self.data.max().values,
+                    self.data.min().values)
+        elif self.dist_func == "EUCD":
+            if len(self.cate_attrs):
+                raise TypeError("EUCD方法只能应用于连续型数值属性")
+
+            for si in range(self.n):
+                self.distance.loc[si, si:] = self.distance.loc[si:, si] = __euclidean_dist(
+                    self.data.loc[si, :].values,
+                    self.data.loc[si:, :].values,
+                    self.nume_attrs
+                )
+        else:
+            raise TypeError("不合理的参数输入:{}".format(self.dist_func))
 
         # 当采用数据依赖的邻域半径时，根据数据间距离计算邻域半径
+        # 邻域半径"constant"
+        self.delta = np.array([self.delta for _ in range(self.n)])
         if self.delta_type == 'variable':
-            mask = np.ones(self.distance.shape, dtype=bool)
-            np.fill_diagonal(mask, 0)
-            max_dist = self.distance.values[mask].max()
-            min_dist = self.distance.values[mask].min()
-            self.delta = min_dist + self.delta * (max_dist - min_dist)
+            for i in range(self.n):
+                # mask = np.ones(self.distance.shape, dtype=bool)
+                # np.fill_diagonal(mask, 0)
+                mask = np.ones(self.n, dtype=bool)
+                mask[i] = False
+                max_dist = self.distance.values[i][mask].max()
+                min_dist = self.distance.values[i][mask].min()
+                self.delta[i] = min_dist + self.delta[i] * (max_dist - min_dist)
 
         # 统计邻域的元素
-        mask = np.ones(self.n, dtype=bool)
         for si in range(self.n):
-            mask[si] = False
-            neighbors = np.where(self.distance.values[si, mask] < self.delta)
+            neighbors = np.where(self.distance.values[si, :] < self.delta[si])
             self.group_grans[si] = set(neighbors[0])
 
-        # for sample_i in range(self.n):
-        #     # 传统方法
-        #     ed = __euclidean_dist(self.data.loc[sample_i, :].values, self.data.values) <= self._delta
-        #     # 新方法
-        #     dist = __euclidean_dist(data[sample_i, :], data)
-        #     dist = np.delete(dist, sample_i, 0)  # 排除样本自己
-        #     radius = min(dist) + self.delta * (max(dist) - min(dist))
-        #     ed = dist <= radius
-        #     ed = np.insert(ed, sample_i, True)
-        #     _id = np.arange(self.n)[ed]
-        #     self.group_grans[sample_i] = set(_id)
+    def build(self):
+        """
+        根据初始化的数据建立邻域粗糙集
+        :return:
+        """
+
+        pass
 
     def rebuild(self, attrs):
         """
@@ -135,7 +159,6 @@ class NeighborhoodRoughSet:
         :return:
         """
         self.attrs = attrs
-
         self.nume_attrs = set(self.attrs).intersection(set(self.nume_attrs))
         self.cate_attrs = set(self.attrs).intersection(set(self.cate_attrs))
         self.granulate()
@@ -238,9 +261,10 @@ class NeighborhoodRoughSet:
 """
 
 
-def calculate_sig_a(data, delta, a, B: set, D: dict):
+def sig_a(a, B, D: dict, delta, data, numes):
     """
     计算属性a的重要度
+    :param numes:
     :param data: 数据
     :param delta: 邻域半径
     :param a: 属性a
@@ -248,10 +272,10 @@ def calculate_sig_a(data, delta, a, B: set, D: dict):
     :param D: 决策属性集
     :return: 重要度
     """
-    ab_nrs = NeighborhoodRoughSet(data, list(B.union({a})), [0, 1], delta)
-    b_nrs = NeighborhoodRoughSet(data, list(B), delta)
-    sig_a = ab_nrs.dependency_to_b(D) - b_nrs.dependency_to_b(D)
-    return sig_a
+    ab_nrs = NeighborhoodRoughSet(data, list(B.union({a})), numes, delta)
+    b_nrs = NeighborhoodRoughSet(data, list(B), numes, delta)
+    sig = ab_nrs.dependency_to_b(D) - b_nrs.dependency_to_b(D)
+    return sig
 
 
 def trans_to_d(labels):
@@ -329,7 +353,7 @@ if __name__ == '__main__':
         logging.info("开始循环：")
         for a in A.difference(red):
             logging.info("计算属性{}的重要度".format(a))
-            sig = calculate_sig_a(data, 0.1930, a, red, D)
+            sig = sig_a(data, 0.1930, a, red, D)
             logging.info("属性{}的重要度为{}".format(a, sig))
             if sig > max_sig:
                 max_sig = sig
@@ -339,6 +363,24 @@ if __name__ == '__main__':
             logging.info("当前最重要的属性是{},{}".format(max_sig_index, max_sig))
         else:
             break
+
+    # C = list(train_data.columns)  # set of condition attributes
+    # nume_attrs = DATASET_NUME_ATTRS[dataset]  # 获取数值属性
+    # D = trans_to_d(labels)
+    # Forward attribute reduction algorithm
+    # red = set()
+    # C = set(C)
+    # max_sig, max_k = 0, -1
+    # while len(C) != len(red):
+    #     for a in C.difference(red):
+    #         siga = sig_a(a, red, D, delta, train_data, nume_attrs)
+    #         if siga > max_sig:
+    #             max_sig = siga
+    #             max_k = a
+    #     if max_sig > 0:
+    #         red.add(max_k)
+    #     else:
+    #         return red
 
     print(red)
 

@@ -4,6 +4,7 @@
 
 import pandas as pd
 import numpy as np
+import math
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
@@ -170,7 +171,7 @@ def proposed_model():
             self.grouped_sample()
 
         def grouped_sample(self):
-            for i in range(self._n):
+            for i in range(self.n):
                 # 是否标记数据属于同一类
                 cnt = 0  # 统计邻域内有多少种类别的样本
                 ll = []  # 保存类别名
@@ -191,7 +192,7 @@ def proposed_model():
                         self._l1.add(i)  # 属于正域
 
         def imp(self, a, b, c, nc):
-            return a * (len(self._l1) / self._n) + b * (self._n / (len(self._l2) + self._n)) \
+            return a * (len(self._l1) / self.n) + b * (self._n / (len(self._l2) + self._n)) \
                    + c * (nc / self.compute_granular_card())
 
     def sig(a, A: set):
@@ -275,7 +276,7 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, name, alpha, 
 
         def __neighbor_upper_app(self, k):
             """
-            计算样本k的领域上近似集
+            计算样本k的邻域上近似集
             :param k:
             :return:
             """
@@ -386,6 +387,105 @@ def my_model(neighbor_delta, labeled_data, unlabeled_data, labels, name, alpha, 
     return red, mx_union
 
 
+def new_model(neighbor_delta, labeled_data, unlabeled_data, labels, name, alpha, f):
+    """
+    :param f: logout file
+    :param alpha: radio of labeled data
+    :param name: name of dataset
+    :param neighbor_delta: float, 邻域半径
+    :param labeled_data: ndarray
+    :param unlabeled_data: ndarray
+    :param labels: ndarray
+    :return:
+    """
+    # 参数
+    # data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/wine.csv'
+    delta = neighbor_delta
+    beta = 1 - alpha
+    # radio = radio
+
+    # 模型
+    class SemiRoughSet(NeighborhoodRoughSet):
+        def __init__(self, data, attrs, nume_attrs, delta, labels=None):
+            """
+            :param data: 数据
+            :param attrs: 属性列表 list
+            :param delta: 邻域半径
+            :param labels: 标签
+            """
+            # 调用父类，建立邻域
+            super(SemiRoughSet, self).__init__(data, attrs, nume_attrs, delta)
+            if labels is None:
+                self.labels = []
+            else:
+                self.labels = labels
+                self.partition = group_by_label(self.labels)
+
+    def measure(attrs):
+        if len(attrs) == 0:
+            return 0
+        # 计算数值属性集
+        n_attrs = nume_attrs.intersection(attrs)
+        model_un = SemiRoughSet(unlabeled_data, list(attrs), list(n_attrs), delta)
+        model_la = SemiRoughSet(labeled_data, list(attrs), list(n_attrs), delta, labels)
+        D = trans_to_d(labels.reshape(-1))  # 将决策属性转化格式
+        low = model_un.get_lower_approximation(D)
+        struct1 = sum(len(neighbor) for neighbor in model_un.group_grans.values())
+        struct2 = sum(len(neighbor) for neighbor in model_la.group_grans.values())
+        return 0.8 * len(low) / model_la.n + 0.2 * math.exp(- struct1 / pow(model_la.n, 2)) + 0.2 * math.exp(- struct2 / pow(model_un.n, 2))
+
+    def imp(a, t: set):
+        m_ta = measure(t.union({a}))
+        m_t = measure(t)
+        diff = m_ta - m_t
+        return m_ta, m_t, diff
+
+    # --------------------------算法流程---------------------------
+    print("初始化数据......")
+    labeled_data = pd.DataFrame(labeled_data)
+    unlabeled_data = pd.DataFrame(unlabeled_data)
+
+    # 属性集
+    attr = list(labeled_data.columns)  # 条件属性集
+    nume_attrs = DATASET_NUME_ATTRS[name]  # 获取数值属性
+    # D = trans_to_d(labels.reshape(-1))  # 将决策属性转化格式
+    f.write("{}>> 算法开始运行\n".format(datetime.now()))
+    f.write("初始条件属性集: {}\n".format(attr))
+    f.write("数值属性集：{}\n".format(nume_attrs))
+
+    # Algorithm
+    red = set()  # 约简集
+    mx_sig_red = 0  # 最大值
+    attr = set(attr)
+    # dsc = measure(attr)
+    # f.write("所有数据的measure值: {}\n".format(dsc))
+
+    print("开始约简......")
+    while True:
+        mx_sig = 0
+        mx_sig_union = 0
+        i = -1
+        for a in attr.difference(red):
+            sig_union, sig_red, sig_a = imp(a, red)
+            print("计算属性{}重要度为：{}".format(a, sig_a))
+            if sig_a > mx_sig:
+                mx_sig = sig_a
+                mx_sig_union = sig_union
+                mx_sig_red = sig_red
+                i = a
+        if i == -1:
+            print("本轮运行结果：{}".format(red))
+            print("当前约简集重要度：{}".format(mx_sig_red))
+            break
+        print("当前最重要属性{}".format(i))
+        red.add(i)
+        print("本轮运行结果：{}".format(red))
+        print("当前约简集重要度：{}".format(mx_sig_union))
+        print("-----------------------------------------------------")
+
+    return red, mx_sig_red
+
+
 def run(root, file):
     # 超参数
     # data_path = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/ecoli.csv'
@@ -397,20 +497,20 @@ def run(root, file):
     beta = 0.2
     res = []
 
-    reader = ReadData(data_path, norm=False)
+    reader = ReadData(data_path, norm=True)
     # 保存运行信息的文件
     f = get_log_file(file)
 
-    for r in [0.3, 0.5, 0.7]:  # 未标签率
-        for d in np.arange(0.15, 0.31, 0.01):  # w
+    for r in [0.5]:  # 未标签率
+        for d in np.arange(0.06, 0.20, 0.02):  # w
 
             red_size = 0
             acc_t = 0.0
             dis_m = 0.0
             print("--------------------------------------------")
             f.write("--------------------------------------------\n")
-            f.write("当前未标签率: {}, 邻域半径: {}\n".format(r, d))
-            print("当前未标签率: {}, 邻域半径: {}".format(r, d))
+            f.write("数据集: {}, 当前未标签率: {}, 邻域半径: {}\n".format(file, r, d))
+            print("{}==>当前未标签率: {}, 邻域半径: {}".format(file, r, d))
             # 先分割数据集
             for i, x_train, x_test, y_train, y_test in reader.get_k_fold(k_fold):
                 f.write("{}th fold:\n".format(i+1))
@@ -418,11 +518,11 @@ def run(root, file):
                 x_labeled, x_unlabeled, y_labeled, _ = split_unlabel_data(x_train, y_train, r)
 
                 start_time = datetime.now()
-                red, ds = my_model(d, x_labeled, x_unlabeled, y_labeled, file, alpha, f)
+                red, ds = new_model(d, x_labeled, x_unlabeled, y_labeled, file, alpha, f)
                 end_time = datetime.now()
                 red_size += len(red)
                 dis_m += ds
-                print("第{}折约简结果: {}, ds: {}".format(i, list(red), ds))
+                print("{}==>第{}折约简结果: {}, ds: {}".format(file, i, list(red), ds))
                 f.write("reduction: {}\nds: {}\nrunning time: {}s\n".format(list(red), ds, (end_time-start_time).seconds))
 
                 # Train SVM with raw data
@@ -442,7 +542,9 @@ def run(root, file):
                 acc_test = clf.score(x_test, y_test.ravel())
                 acc_t += acc_test
 
-                print("第{}折SVM分类结果test: {}".format(i, acc_test))
+                print("{}==>{}: 第{}折SVM分类结果test: {}".format(file, d, i, acc_test))
+                print("--------------------------------------------")
+
                 f.write("accuracy of SVM with reduced data: {}\n".format(acc_test))
                 f.write("--------------------------------------------------------\n")
 
@@ -454,13 +556,22 @@ def run(root, file):
             res.append([alpha, r, d, avg_red_size, avg_ds, avg_acc_test])
 
     df = pd.DataFrame(res, columns=['alpha', 'unlabeled-radio', 'radius', 'reduction-size', 'ds', 'test-accuracy'])
-    df.to_excel("results/{}-results.xlsx".format(file))
+    df.to_excel("results/results-of-diff-radius/{}-results-of-diff-radius.xlsx".format(file))
     f.close()
     print("{}运行结束".format(file))
 
 
 if __name__ == '__main__':
-    files = ['wine', 'wdbc', 'ecoli', 'BreastTissue', 'seeds', 'ionosphere', 'parkinsons', 'glass', 'dermatology', 'german', 'yeast', 'segment']
+    files = ['wine',
+             'wdbc',
+             'ionosphere',
+             # 'mushroom',
+             # 'lymphography',
+             # 'zoo',
+             # 'german',
+             # 'heart',
+             # 'credit'
+             ]
     root = '/Users/zhang/gitdir/Neighborhood-Rough-Set/dataset/'
     for file in files:
         run(root, file)

@@ -3,7 +3,7 @@
 # @Author  : zeetng
 
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, LabelEncoder
+from sklearn.preprocessing import MinMaxScaler, LabelEncoder, OrdinalEncoder
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
 import matplotlib.pyplot as plt
@@ -24,16 +24,21 @@ DATA_PATH = 'dataset/wine.csv'
 # 数据属性集数值属性
 DATASET_NUME_ATTRS = {'wine': set([x for x in range(13)]),
                       'wdbc': set([x for x in range(30)]),
-                      'ecoli': set([x for x in range(7)]),
-                      'BreastTissue': set([x for x in range(9)]),
-                      'seeds': set([x for x in range(7)]),
+                      # 'ecoli': set([x for x in range(7)]),
+                      # 'BreastTissue': set([x for x in range(9)]),
+                      # 'seeds': set([x for x in range(7)]),
                       'ionosphere': set([x for x in range(34)]),
-                      'parkinsons': set([x for x in range(22)]),
-                      'glass': set([x for x in range(9)]),
-                      'dermatology': {34},
+                      # 'parkinsons': set([x for x in range(22)]),
+                      # 'glass': set([x for x in range(9)]),
+                      # 'dermatology': {34},
                       'german': {1, 3, 9},
-                      'yeast': set([x for x in range(8)]),
-                      'segment': set([x for x in range(19)]),
+                      # 'yeast': set([x for x in range(8)]),
+                      # 'segment': set([x for x in range(19)]),
+                      'credit': {1, 2, 7, 10, 13, 14},
+                      'mushroom': set(),
+                      'zoo': set(),
+                      'lymphography': set(),
+                      'heart': {0, 3, 4, 7, 9, 11}
                       }
 
 
@@ -98,6 +103,13 @@ def split_unlabel_data(data, labels, radio):
     return x_labeled, x_unlabeled, y_labeled, y_unlabeled
 
 
+def hybrid_data(data, labels, radio):
+    size = len(data)
+    index = np.random.choice(size, size=int(size*radio), replace=False)
+    labels[index] = -1
+    return data, labels
+
+
 def trans_to_d(labels):
     """
     将标签列表转化为{类别：样本集}的格式,
@@ -145,3 +157,16 @@ class ReadData:
             yield i, x_train, x_test, y_train, y_test
 
 
+def data_preprocess(path):
+    data = pd.read_csv(path, header=None)
+    print(data.dtypes, data.info())
+    for i in range(15):
+        if i not in DATASET_NUME_ATTRS['crx']:
+            enc = OrdinalEncoder()
+            x = enc.fit_transform(data[i].reshape((-1, 1)))
+            data[i] = np.reshape(x, (-1))
+            pass
+
+
+if __name__ == '__main__':
+    data_preprocess('dataset/crx.csv')
